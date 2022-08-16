@@ -1,0 +1,29 @@
+---
+title: "ml_carp"
+author: "Jake Eisaguirre"
+date: "2022-08-16"
+output: ''
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+if (!require(librarian)){
+  install.packages("librarian")
+  library(librarian)
+}
+
+# librarian downloads, if not already downloaded, and reads in needed packages
+
+librarian::shelf(tidyverse, here, rpart, rpart.plot, randomForest, xgboost)
+
+```
+
+### download data
+```{r}
+
+download.file("https://www.openml.org/data/get_csv/49817/wine_quality.arff", 
+               here("data", "wine.csv"))
+
+```
+
