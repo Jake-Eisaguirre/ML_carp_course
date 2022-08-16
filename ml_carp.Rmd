@@ -19,11 +19,222 @@ librarian::shelf(tidyverse, here, rpart, rpart.plot, randomForest, xgboost)
 
 ```
 
-### download data
+#### download data
 ```{r}
 
 download.file("https://www.openml.org/data/get_csv/49817/wine_quality.arff", 
                here("data", "wine.csv"))
 
 ```
+
+#### view the data
+```{r}
+
+ggplot(data = kyphosis, aes(x=Number, y=Start)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+```
+#### Make a train/test split (base R)
+```{r}
+
+#supervised learning
+# 1) train/test split data 
+# 2) train model on train_df
+# 3) test model on test_df
+
+trainSize <- round(0.75*nrow(kyphosis))
+
+#set seed for random use - reporducibility
+#set.seed(42)
+
+#row numbers for random data in my trainset
+trainIndex <- sample(nrow(kyphosis), trainSize)
+
+# make new df for trainning
+trainDF <- kyphosis[trainIndex,]
+
+#make a new df for testing
+testDF <- kyphosis[-trainIndex, ]
+
+```
+
+#### linear regression (pretending it is ML)
+```{r}
+
+model1 <- lm(Start ~ Number, data = trainDF)
+summary(model1)
+
+# predict with the model we created predicted vertebrate
+predicted_start <- predict(model1, testDF)
+
+# actural start vertebrate
+actual_start <- testDF$Start
+
+# error checking
+errors <- predicted_start - actual_start
+
+# measuring the prediction error (residuals) - look at Root MSE (mean square errors)
+sqrt(mean(errors^2))
+
+# MAE - mean absolute error
+mean(abs(errors))
+
+```
+
+#### Logistic regression (as ML classification)
+```{r}
+
+levels(kyphosis$Kyphosis)
+
+# glm for binary response variable
+model2 <- glm(Kyphosis ~ Age + Number + Start, data = trainDF, family = "binomial")
+
+# predict based on model from trainDF - probabilities of the binary outcome
+predict(model2, testDF, type = 'response')
+
+# look at 50% prob
+predict(model2, testDF, type = 'response') < 0.5
+
+# make conditional for absent or presnet to match original data
+pred_kyphosis <- ifelse(predict(model2, testDF, type = 'response') < 0.5, "absent", "present")
+
+# check pred_kyphosis with testDF$kyphosis. 18 out of 20 were predicted correctly or a 0.9 accuracy score
+sum(testDF$Kyphosis == pred_kyphosis)
+accuracy <- sum(testDF$Kyphosis == pred_kyphosis)/nrow(testDF)
+```
+
+#### Decision Trees - basic example (un-supervised)
+```{r}
+
+set.seed(456)
+ 
+# create some data
+exam <- tibble(score = sample(80:100, 200, replace = T)) %>% 
+  mutate(grade = as_factor(ifelse(score<90, "B", "A")))
+
+# determine grade as a fuction of score
+exam_tree <- rpart(grade ~ score, data = exam)
+
+# plot the tree
+rpart.plot(exam_tree, extra = 2)
+```
+
+#### Decision Tree w/ Kyphosis example
+```{r}
+
+k_tree <- rpart(Kyphosis ~ . , data = kyphosis)
+
+rpart.plot(k_tree, extra = 2)
+
+
+# replicate with training and test set
+set.seed(6789)
+
+trainSize <- round(0.75 * nrow(kyphosis))
+trainIndex <- sample(nrow(kyphosis), trainSize)
+train_df <- kyphosis[trainIndex, ]
+
+test_df <- kyphosis[-trainIndex, ]
+
+#create model and plot
+tree_model <- rpart(Kyphosis ~ ., data = train_df)
+rpart.plot(tree_model, extra = 2)
+
+#predict on the model from test_df
+predMatrix <- predict(tree_model, test_df)
+
+#add predictions back to test_df
+predDF <- test_df %>% 
+  cbind(predMatrix)
+
+# add if else statement for absent or present based on prediction
+predDF <- predDF %>% 
+  mutate(prediction = ifelse(absent > 0.5, "absent", "present"))
+
+# now get accuracy score by comparing model predictions to test_df
+sum(predDF$Kyphosis == predDF$prediction)/nrow(test_df)
+```
+
+#### decision tree real data
+```{r}
+
+wine <- read_csv(here("data", "wine.csv"))
+
+ggplot(wine, aes(x=quality)) +
+  geom_histogram(binwidth = 1)
+
+# add categorigal variable for quality
+redwineClass <- wine %>% 
+  dplyr::slice(1:1599) %>% #just red wine
+  mutate(grade = as_factor(if_else(quality < 5.5, "bad", "good"))) %>% 
+  select(-quality)
+
+# train/test split data
+set.seed(1234)
+trainSize <- round(0.8 * nrow(redwineClass))
+trainIndex <- sample(nrow(redwineClass), trainSize)
+
+trainDF <- redwineClass %>% 
+  dplyr::slice(trainIndex)
+
+testDF <- redwineClass %>% 
+  dplyr::slice(-trainIndex)
+
+# create decision tree based on quality and all variables
+t_mod <- rpart(grade ~ . , data = trainDF)
+rpart.plot(t_mod, extra =2)
+
+# predict based on model
+predMatrix <- predict(t_mod, testDF)
+
+# add predictions back to testDF
+predDF <- testDF %>% 
+  cbind(predMatrix)
+
+# add if else statement for absent or present based on prediction
+predDF <- predDF %>% 
+  mutate(prediction = ifelse(good > 0.5, "good", "bad"))
+
+# now get accuracy score by comparing model predictions to testDF
+sum(predDF$grade == predDF$prediction)/nrow(testDF)
+  
+```
+
+#### random forest model
+```{r}
+
+# random forest: take (n=500) different boostrap samples with replacement. So some sample repeated (bootstrapping). Bakes in randomness with replacement. Since some replaced or repeated it leaves some samples out. For each sample it then makes a decision tree where it then takes a random selection of some of the columns/variables for each sample.
+
+set.seed(4567)
+
+# random forest model
+redwineForest <- randomForest(grade ~ . , data = trainDF)
+
+# predict on the model
+rwf_pred <- predict(redwineForest, testDF)
+
+# add prediction scores to testDF
+rwf_pred <- testDF %>% 
+  cbind(rwf_pred)
+
+# now get accuracy score by comparing model predictions to testDF
+sum(rwf_pred$rwf_pred == rwf_pred$grade)/nrow(testDF)
+
+# look at results - confusion matrix for out of bag (OOB) error
+print(redwineForest)
+
+
+# variable importance - algo keeps track when tree split and give us important variables
+set.seed(2345)
+redwineForest <- randomForest(grade ~ . , data = trainDF, importance = T)
+importance(redwineForest)
+
+
+```
+
+
+
+
 
