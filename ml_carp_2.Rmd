@@ -7,5 +7,295 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+if (!require(librarian)){
+  install.packages("librarian")
+  library(librarian)
+}
+
+# librarian downloads, if not already downloaded, and reads in needed packages
+
+librarian::shelf(tidyverse, here, rpart, rpart.plot, randomForest, xgboost, dplyr)
+
 ```
+
+# read in data
+```{r}
+
+wine <- read_csv(here("data", "wine.csv"))
+
+```
+
+# random forest regression model
+```{r}
+set.seed(1234)
+
+redwine <- wine %>% 
+  dplyr::slice(1:1599)
+
+# split the data for traiing and test
+trainSize <- round(0.8*nrow(redwine))
+trainIndex <- sample(nrow(redwine), trainSize)
+
+trainDF <- redwine %>% 
+  dplyr::slice(trainIndex)
+
+testDF <- redwine %>% 
+  dplyr::slice(-trainIndex)
+
+# make model - tree
+rwtree <- rpart(quality ~ . , data = trainDF, method = "anova")
+
+rpart.plot(rwtree, type = 2)
+
+# test model with testDF to check performance with RMSE - LOWER IS BETTER
+predictiveQuality <- predict(rwtree, testDF)
+
+errors <- predictiveQuality - testDF$quality
+
+RMSE <- sqrt(mean(errors^2))
+
+```
+
+# random forest regression model
+```{r}
+set.seed(4567)
+
+# forest model
+rwfor <- randomForest(quality ~ ., data = trainDF, importance = T)
+
+# predict onn mode
+predQualRF <- predict(rwfor, testDF)
+
+errors_rf <- predQualRF - testDF$quality
+
+RMSE_rf <- sqrt(mean(errors_rf^2))
+
+#variable importance
+importance(rwfor, type = 1) %>%
+  as_tibble(rownames = "Variable") %>% 
+  arrange(desc(`%IncMSE`))
+
+
+# lm for wine to compare RMSE
+red_lm <- glm(quality ~ ., data = trainDF)
+lm_pred <- predict(red_lm, testDF)
+RMSE_lm <- sqrt(mean((lm_pred - testDF$quality)^2))
+
+```
+
+# random forest white wine
+```{r}
+set.seed(42)
+whitewine <- wine %>% 
+  dplyr::slice(1600:6497)
+
+# split the data for traiing and test
+trainSize <- round(0.8*nrow(whitewine))
+trainIndex <- sample(nrow(whitewine), trainSize)
+
+trainDF <- whitewine %>% 
+  dplyr::slice(trainIndex)
+
+testDF <- whitewine %>% 
+  dplyr::slice(-trainIndex)
+
+wrf <- randomForest(quality ~ . , data = trainDF)
+
+pred_white <- predict(wrf, data = testDF)
+
+RMSE_white <- sqrt(mean((pred_white - testDF$quality)^2))
+
+importance(wrf)
+
+```
+
+# gradient boosted trees
+```{r}
+
+set.seed(1234)
+
+redwine <- wine %>% 
+  dplyr::slice(1:1599)
+
+# split the data for traiing and test
+trainSize <- round(0.8*nrow(redwine))
+trainIndex <- sample(nrow(redwine), trainSize)
+
+trainDF <- redwine %>% 
+  dplyr::slice(trainIndex)
+
+testDF <- redwine %>% 
+  dplyr::slice(-trainIndex)
+
+# specific data structures for xgboost
+dtrain <- xgb.DMatrix(data = as.matrix(select(trainDF, -quality)), 
+                      label = trainDF$quality)
+
+dtest <- xgb.DMatrix(data = as.matrix(select(testDF, -quality)), 
+                      label = testDF$quality)
+
+# make model
+redwineXGB <- xgb.train(data = dtrain, nrounds = 10)
+
+# predict
+pQuality <- predict(redwineXGB, dtest)
+
+# get errors
+erros <- pQuality - testDF$quality
+
+# RMSE
+sqrt(mean(erros^2))
+
+
+
+# add watch list to give RMSE score.
+redwineXGB <- xgb.train(data = dtrain, watchlist = list(test = dtest), nrounds = 14)
+
+# plot evaluation log from trained model
+redwineXGB$evaluation_log %>% 
+  ggplot(aes(x = iter, y = test_rmse)) + 
+  geom_line()
+
+
+
+# add params to model
+redwineXGB <- xgb.train(data = dtrain, 
+                        params = list(eta=0.1), #learning rate
+                        watchlist = list(test = dtest), 
+                        nrounds = 1000,
+                        early_stopping_rounds = 10,
+                        print_every_n = 5)
+
+# plot evaluation log from trained model
+redwineXGB$evaluation_log %>% 
+  ggplot(aes(x = iter, y = test_rmse)) + 
+  geom_line()
+
+# variable importance
+xgb.importance(model=redwineXGB)
+
+
+
+
+# add more items to watchlist
+redwineXGB <- xgb.train(data = dtrain, 
+                        params = list(eta=0.1), #learning rate
+                        watchlist = list(train = dtrain, test = dtest), # watch both DFs. Will stop 2 value
+                        nrounds = 1000,
+                        early_stopping_rounds = 10,
+                        print_every_n = 5)
+
+# plot evaluation log from trained model
+redwineXGB$evaluation_log %>% 
+  pivot_longer(cols = c(train_rmse, test_rmse), names_to = "RMSE") %>% 
+  ggplot(aes(x = iter, y = value, color = RMSE)) + 
+  geom_line()
+
+```
+# white wine xg boost
+```{r}
+set.seed(42)
+whitewine <- wine %>% 
+  dplyr::slice(1600:6497)
+
+# split the data for traiing and test
+trainSize <- round(0.8*nrow(whitewine))
+trainIndex <- sample(nrow(whitewine), trainSize)
+
+trainDF <- whitewine %>% 
+  dplyr::slice(trainIndex)
+
+testDF <- whitewine %>% 
+  dplyr::slice(-trainIndex)
+
+# specific data structures for xgboost
+dtrain <- xgb.DMatrix(data = as.matrix(select(trainDF, -quality)), 
+                      label = trainDF$quality)
+
+dtest <- xgb.DMatrix(data = as.matrix(select(testDF, -quality)), 
+                      label = testDF$quality)
+
+
+# train white wine model
+whitewineXGB <- xgb.train(data = dtrain, 
+                        params = list(eta=0.1), #learning rate
+                        watchlist = list(train = dtrain, test = dtest), # watch both DFs. Will stop 2 value
+                        nrounds = 10000,
+                        early_stopping_rounds = 100,
+                        print_every_n = 100)
+
+# plot evaluation log from trained model
+whitewineXGB$evaluation_log %>% 
+  pivot_longer(cols = c(train_rmse, test_rmse), names_to = "RMSE") %>% 
+  ggplot(aes(x = iter, y = value, color = RMSE)) + 
+  geom_line()
+
+
+```
+
+# k-fold cross validation
+```{r}
+set.seed(1234)
+
+redwine <- wine %>% 
+  dplyr::slice(1:1599)
+
+# split the data for traiing and test
+trainSize <- round(0.8*nrow(redwine))
+trainIndex <- sample(nrow(redwine), trainSize)
+
+trainDF <- redwine %>% 
+  dplyr::slice(trainIndex)
+
+testDF <- redwine %>% 
+  dplyr::slice(-trainIndex)
+
+# specific data structures for xgboost
+dtrain <- xgb.DMatrix(data = as.matrix(select(trainDF, -quality)), 
+                      label = trainDF$quality)
+
+dtest <- xgb.DMatrix(data = as.matrix(select(testDF, -quality)), 
+                      label = testDF$quality)
+
+# cross validation
+set.seed(524)
+
+rwCV <- xgb.cv(params = list(eta=0.3),
+               data = dtrain,
+               nfold = 10,
+               nround = 500,
+               early_stopping = 10,
+               print_every_n = 5)
+
+
+# repeat cross validation in a loop
+paramDF <- tibble(eta = c(0.001, 0.01, 0.1, 0.2, 0.3, 0.4))
+paramList <- lapply(split(paramDF, 1:nrow(paramDF)), as.list)
+
+# forloop prep
+bestResults <- tibble()
+set.seed(708)
+pb <- txtProgressBar(style = 3)
+
+for(i in seq(length(paramList))) {
+  rwCV <- xgb.cv(params = paramList[[i]],
+               data = dtrain,
+               nfold = 10,
+               nround = 500,
+               early_stopping = 10,
+               verbose = F)
+  
+  bestResults <- bestResults %>% 
+    bind_rows(rwCV$evaluation_log[rwCV$best_iteration])
+  
+  gc()
+  setTxtProgressBar(pb, i/length(paramList))
+}
+close(pb)
+
+etasearch <- bind_cols(paramDF, bestResults)
+
+```
+
 
