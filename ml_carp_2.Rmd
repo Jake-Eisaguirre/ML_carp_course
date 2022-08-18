@@ -298,4 +298,33 @@ etasearch <- bind_cols(paramDF, bestResults)
 
 ```
 
+# grid search
+```{r}
+
+paramDF <- expand.grid(
+  max_depth = seq(15, 29, by = 2),
+  max_leaves = c(63, 127, 255, 511, 1023, 2047, 4095),
+  eta = 0.1)
+
+
+paramList <- lapply(split(paramDF, 1:nrow(paramDF)), as.list)
+bestResults <- tibble()
+set.seed(312)
+pb <- txtProgressBar(style = 3)
+for(i in seq(length(paramList))) {
+  rwCV <- xgb.cv(params = paramList[[i]],
+                 data = dtrain, 
+                 nrounds = 500, 
+                 nfold = 10,
+                 early_stopping_rounds = 10,
+                 verbose = FALSE)
+  bestResults <- bestResults %>% 
+    bind_rows(rwCV$evaluation_log[rwCV$best_iteration])
+  gc() 
+  setTxtProgressBar(pb, i/length(paramList))
+}
+close(pb)
+depth_leaves <- bind_cols(paramDF, bestResults)
+
+```
 
